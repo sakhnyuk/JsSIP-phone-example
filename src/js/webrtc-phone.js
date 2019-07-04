@@ -1,7 +1,7 @@
 JsSIP.debug.enable("JsSIP:*");
 
 var webrtcPhone = (function() {
-  var server, wssAddress, name, exten, impi, impu, phone, activeCall;
+  var server, wssAddress, name, exten, impi, impu, phone, activeCall, callStart;
   var registered = false;
 
   var ringing = new Audio("sounds/ringing.mp3");
@@ -16,7 +16,7 @@ var webrtcPhone = (function() {
     password = data.password;
     impi = exten;
     impu = "sip:" + exten + "@" + server;
-    wssAddress = "ws://" + server + ":8088/ws";
+    wssAddress = "wss://" + server + ":8089/ws";
 
     var socket = new JsSIP.WebSocketInterface(wssAddress);
     var configuration = {
@@ -50,6 +50,8 @@ var webrtcPhone = (function() {
         activeCall.on("failed", function(e) {
           console.log("call failed with cause: " + e.cause);
           activeCall = undefined;
+          ringing.pause();
+          calling.pause();
         });
 
         activeCall.on("progress", function(e) {
@@ -59,6 +61,8 @@ var webrtcPhone = (function() {
         activeCall.on("confirmed", function(e) {
           console.log("call confirmed");
           callStart = new Date().getTime();
+          ringing.pause();
+          calling.pause();
         });
 
         activeCall.on("ended", function(e) {
@@ -70,9 +74,15 @@ var webrtcPhone = (function() {
         activeCall.on("reinvite", function(e) {
           console.log("call reinvited with request: " + e.request);
         });
+
+        if (e.session.direction === "incoming") {
+          console.log("INCOMING");
+        }
       } else {
         e.session.terminate({ status_code: 486 });
         activeCall = undefined;
+
+        ringing.play();
       }
     });
 
@@ -105,11 +115,13 @@ var webrtcPhone = (function() {
     };
 
     var session = phone.call("sip:" + to + "@" + server, options);
+    calling.play();
   }
 
   function answer() {
     if (activeCall) {
       activeCall.answer({ mediaConstraints: { audio: true, video: false } });
+      ringing.pause();
     }
   }
 
