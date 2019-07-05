@@ -1,4 +1,4 @@
-JsSIP.debug.enable("JsSIP:*");
+// SIP.debug.enable("JsSIP:*");
 
 var webrtcPhone = (function() {
   var server, wssAddress, name, exten, impi, impu, phone, activeCall, callStart;
@@ -15,74 +15,81 @@ var webrtcPhone = (function() {
     exten = data.exten;
     password = data.password;
     impi = exten;
-    impu = "sip:" + exten + "@" + server;
+    impu = exten + "@" + server;
     wssAddress = "wss://" + server + ":8089/ws";
 
-    var socket = new JsSIP.WebSocketInterface(wssAddress);
+    // var socket = new SIP.WebSocketInterface(wssAddress);
     var configuration = {
-      sockets: [socket],
+      transportOptions: {
+        wsServers: [wssAddress],
+        traceSip: true
+      },
       uri: impu,
       password: password,
-      no_answer_timeout: 20,
-      session_timers: false,
+      authorizationUser: impi,
+      log: {
+        builtinEnabled: true, // LOGS
+        level: "log"
+      },
+      noAnswerTimeout: 60,
+      userAgentString: "NewVats Phone",
       register: true,
-      trace_sip: true,
-      connection_recovery_max_interval: 30,
-      connection_recovery_min_interval: 2
+      allowLegacyNotifications: true,
+      sessionDescriptionHandlerFactoryOptions: {
+        // peerConnectionOptions: {
+        //   rtcConfiguration: {
+        //     iceServers
+        //   }
+        // },
+        constraints: {
+          audio: true,
+          video: false
+        }
+      }
     };
 
-    phone = new JsSIP.UA(configuration);
+    phone = new SIP.UA(configuration);
 
-    phone.on("connected", function(e) {
-      console.log("CONNECTED");
+    phone.on("registered", function() {
+      console.log("registered");
     });
 
-    phone.on("disconnected", function(e) {
-      console.log("DISCONNECTED");
+    phone.on("unregistered", function() {
+      console.log("unregistered");
     });
 
-    phone.on("newRTCSession", function(e) {
-      console.debug("New session created");
+    phone.on("transportCreated", function(transport) {
+      console.log("transportCreated", transport);
+    });
 
-      if (activeCall === undefined && e.session !== undefined) {
+    phone.on("invite", function(session) {
+      console.debug("New session created", session);
+      session.accept();
+
+      if (activeCall === undefined && session !== undefined) {
         // new incoming call
-        activeCall = e.session;
-        activeCall.on("failed", function(e) {
-          console.log("call failed with cause: " + e.cause);
-          activeCall = undefined;
-          ringing.pause();
-          calling.pause();
-        });
+        activeCall = session;
+        ringing.play();
 
         activeCall.on("progress", function(e) {
-          if (e.originator === "remote") e.response.body = null;
+          console.log("progress");
         });
 
         activeCall.on("confirmed", function(e) {
           console.log("call confirmed");
           callStart = new Date().getTime();
           ringing.pause();
-          calling.pause();
         });
 
-        activeCall.on("ended", function(e) {
-          console.debug("Call terminated");
-
-          activeCall = undefined;
+        activeCall.on("accepted", function(data) {
+          console.log("accepted", data);
+          ringing.pause();
         });
-
-        activeCall.on("reinvite", function(e) {
-          console.log("call reinvited with request: " + e.request);
-        });
-
-        if (e.session.direction === "incoming") {
-          console.log("INCOMING");
-        }
       } else {
-        e.session.terminate({ status_code: 486 });
+        session.terminate({ status_code: 486 });
         activeCall = undefined;
-
-        ringing.play();
+        ringing.pause();
+        calling.pause();
       }
     });
 
@@ -94,33 +101,43 @@ var webrtcPhone = (function() {
   }
 
   function call(to) {
-    var eventHandlers = {
-      progress: function(e) {
-        console.log("call is in progress");
-      },
-      failed: function(e) {
-        console.log("call failed with cause: " + e.cause, e);
-      },
-      ended: function(e) {
-        console.log("call ended with cause: " + e.cause, e);
-      },
-      confirmed: function(e) {
-        console.log("call confirmed");
+    var options = {
+      sessionDescriptionHandlerOptions: {
+        constraints: {
+          audio: true,
+          video: false
+        }
       }
     };
 
-    var options = {
-      eventHandlers: eventHandlers,
-      mediaConstraints: { audio: true, video: false }
-    };
+    if (phone.isRegistered()) {
+      activeCall = phone.invite("sip:" + to + "@" + server, options);
 
-    var session = phone.call("sip:" + to + "@" + server, options);
-    calling.play();
+      activeCall.on("progress", function(response) {
+        if (response.statusCode === 180) calling.play();
+      });
+
+      activeCall.on("accepted", function(data) {
+        calling.pause();
+      });
+
+      activeCall.on("terminated", function(message, cause) {
+        activeCall = undefined;
+        calling.pause();
+      });
+    }
   }
 
   function answer() {
     if (activeCall) {
-      activeCall.answer({ mediaConstraints: { audio: true, video: false } });
+      activeCall.answer({
+        sessionDescriptionHandlerOptions: {
+          constraints: {
+            audio: true,
+            video: false
+          }
+        }
+      });
       ringing.pause();
     }
   }
@@ -128,6 +145,7 @@ var webrtcPhone = (function() {
   function hangup() {
     if (activeCall) {
       activeCall.terminate();
+      calling.pause();
     }
   }
 
